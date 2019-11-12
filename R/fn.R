@@ -225,12 +225,12 @@ fn_body_node <- function(fn) {
 #' partial matching, etc). One practical consequence of the special
 #' way in which primitives are passed arguments is that they
 #' technically do not have formal arguments, and [formals()] will
-#' return `NULL` if called on a primitive function. Finally, primitive 
-#' functions can either take arguments lazily, like R closures do, 
-#' or evaluate them eagerly before being passed on to the C code. 
-#' The former kind of primitives are called "special" in R terminology, 
-#' while the latter is referred to as "builtin". `is_primitive_eager()` 
-#' and `is_primitive_lazy()` allow you to check whether a primitive 
+#' return `NULL` if called on a primitive function. Finally, primitive
+#' functions can either take arguments lazily, like R closures do,
+#' or evaluate them eagerly before being passed on to the C code.
+#' The former kind of primitives are called "special" in R terminology,
+#' while the latter is referred to as "builtin". `is_primitive_eager()`
+#' and `is_primitive_lazy()` allow you to check whether a primitive
 #' function evaluates arguments eagerly or lazily.
 #'
 #' You will also encounter the distinction between primitive and
@@ -378,11 +378,14 @@ fn_env <- function(fn) {
 #'
 #'   If a **function**, it is used as is.
 #'
-#'   If a **formula**, e.g. `~ .x + 2`, it is converted to a function
-#'   with up to two arguments: `.x` (single argument) or `.x` and `.y`
-#'   (two arguments). The `.` placeholder can be used instead of `.x`.
-#'   This allows you to create very compact anonymous functions (lambdas) with up
-#'   to two inputs. Functions created from formulas have a special
+#'   If a **formula**, e.g. `~ .x + 2` or `f(a, b) ~ a + b`, it is converted
+#'   to a function. This allows you to create very compact anonymous
+#'   functions (lambdas). See Lambda Specification section for details.
+#'
+#'   If a **two-sided formula**, e.g., `f(a, b) ~ a + b`, it is converted
+#'   to a function with arguments matching the left-hand side. More details
+#'   are available in the "Lambda Argument Specification" section.
+#'   Functions created from formulas have a special
 #'   class. Use `is_lambda()` to test for it.
 #'
 #'   Lambdas currently do not support [nse-force],
@@ -390,6 +393,32 @@ fn_env <- function(fn) {
 #'
 #' @param env Environment in which to fetch the function in case `x`
 #'   is a string.
+#'
+#' @section Lambda Specification:
+#'
+#'  The right-hand side of a lambda formula is converted into the function body.
+#'
+#'  A one-sided formula (e.g., `~ .x + 2`), becomes a function with up to
+#'  two arguments: `.x` (single argument) or `.x` and `.y`
+#'  (two arguments). The `.` placeholder can be used instead of `.x`.
+#'  If additional arguments are needed, they can be referred to by
+#'  position (e.g., `..1`, `..2`, etc.).
+#'
+#'  A two-sided formula can be used to manually specify arguments in three ways:
+#'    1. A character vector, e.g., `c("a", "b") ~ a + b`.
+#'    2. A named list, e.g., `list(a = 1,b = "two") ~ a + b`.
+#'    3. The `f()` helper function, e.g., `f(a, b) ~ a + b`.
+#'  Note that default values are always set to be `missing_arg()`,
+#'  even if they are specified in the function; e.g., `f(a = 1) ~ a + 1` and
+#'  `f(a) ~ a + 1` both create the exact same function.
+#'  Argument specifications of different types can be combined with the `+`
+#'  operator.  For example, `f(a) + c("b") + list(d = 1) ~ a + b + d` is
+#'  equivalent to `function(a, b, d) a + b + d`.
+#'
+#'  Dots (`...`) are automatically added after all named arguments, unless
+#'  they are manually included at an earlier position.  Note that f(...) is
+#'  invalid; manual dots need to be passed as a character vector or named list.
+#'
 #' @export
 #' @examples
 #' f <- as_function(~ .x + 1)
@@ -400,6 +429,25 @@ fn_env <- function(fn) {
 #'
 #' h <- as_function(~ .x - .y)
 #' h(6, 3)
+#'
+#' # Lambda arguments:
+#'
+#' i <- as_function(f(a, b) ~ a + b)
+#' i(a = 1, b = 2)
+#'
+#' j_names <- c("d", "e")
+#' j <- as_function(j_names ~ d + e)
+#' j(d = 2, e = 5)
+#'
+#' k_data = data.frame(pos = 1:26, upper = LETTERS)
+#' k <- as_function(k_data ~ paste0("Letter ", pos, ": ", upper))
+#' k(1:26, LETTERS)
+#'
+#' # Combine different lambda arguments with `+`;
+#'
+#' k2 <- as_function(k_data + f(suffix) ~
+#'                   paste0("Letter ", pos, ": ", upper, suffix))
+#' k2(1:26, LETTERS, suffix = "!")
 #'
 #' # Functions created from a formula have a special class:
 #' is_lambda(f)
@@ -433,10 +481,15 @@ as_function <- function(x, env = caller_env()) {
 
   if (is_formula(x)) {
     if (length(x) > 2) {
-      abort("Can't convert a two-sided formula to a function")
+      args <- tryCatch(
+        lambda_args_eval(f_lhs(x), env = env),
+        error = function(e)
+          abort(paste0("Error parsing lhs arguments of lambda formula:\n",e))
+      )
+    } else {
+      args <- list(... = missing_arg(), .x = quote(..1), .y = quote(..2), . = quote(..1))
     }
 
-    args <- list(... = missing_arg(), .x = quote(..1), .y = quote(..2), . = quote(..1))
     fn <- new_function(args, f_rhs(x), f_env(x))
     fn <- structure(fn, class = c("rlang_lambda_function", "function"))
     return(fn)
@@ -652,6 +705,61 @@ shortcircuiting_check_nodes <- as.pairlist(c(
   quote(if (.x) return(TRUE)),
   binary_check_nodes[[2]]
 ))
+
+to_missing_arg_list <- function(names) {
+  # Turns a character vector of names into a named list of missing args
+  set_names(
+    rep_along(names, list(missing_arg())),
+    names)
+}
+
+lambda_args_verify <- function(x) {
+  # Ensures valid lambda argument name inputs are returned as
+  # character vectors
+  if(is_character(x)) {
+    x
+  } else if(is_named(x)) {
+    names(x)
+  } else {
+    abort("Invalid arguments for lambda function.")
+  }
+}
+
+lambda_args_f <- function(...) {
+  # Used in lhs of lambda formulas as f(...)
+  char_vec <- map_chr(enexprs(...), as_label)
+  # To match traditional function semantics, named elements will
+  # return names instead of values. That way f(x, a = b, d = e)
+  # returns c("x", "a", "d").
+  named <- have_name(char_vec)
+  if (any(named)) {
+    char_vec[named] <- names(char_vec)[named]
+  }
+  unname(char_vec)
+}
+
+lambda_args_plus <- function(e1, e2) {
+  # Used in lhs of lambda formulas as +
+  c(lambda_args_verify(e1),
+    lambda_args_verify(e2))
+}
+
+lambda_args_eval <- function(lambda_lhs, env = caller_env()) {
+  # Evaluate the rhs of a lambda statement and
+  # return a character vector of argument names.
+  # This also re-interprets f() and + in these formulae.
+  arg_names <-
+    lambda_args_verify(
+      eval_tidy(lambda_lhs,
+                data = list(
+                  f = lambda_args_f,
+                  `+` = lambda_args_plus),
+                env = env))
+  # Ensure no duplicates, and that dots are at the end if not manually
+  # specified
+  arg_names_dots <- unique(c(arg_names, "..."))
+  to_missing_arg_list(arg_names_dots)
+}
 
 #' Make an `fn` object
 #'

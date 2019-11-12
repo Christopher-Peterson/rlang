@@ -130,7 +130,75 @@ test_that("lambda shortcut handles positional arguments", {
 })
 
 test_that("lambda shortcut fails with two-sided formulas", {
-  expect_error(as_function(lhs ~ ..1 + ..3), "two-sided formula")
+  expect_error(as_function(lhs ~ ..1 + ..3), "lhs arguments")
+})
+
+test_that("lambda shortcut accepts lhs arguments from character vector", {
+  expect_identical(as_function(c("a", "b") ~ a + b)(a = 1, b = 3), 4)
+})
+
+test_that("lambda shortcut accepts lhs arguments from f()", {
+  expect_identical(as_function(f(a, b) ~ a + b)(a = 1, b = 3), 4)
+})
+
+test_that("lambda shortcut accepts lhs arguments from named list", {
+  expect_identical(as_function(list(a = NA, b =NA) ~ a + b)(a = 1, b = 3), 4)
+})
+
+test_that("lambda shortcut accepts lhs arguments with plus operator", {
+  char <- c("d", "e")
+  named_lst <- list(a = NA, b = NA)
+  char_named <- named_lst + char ~ a + b + d + e
+  char_f <- f(a, b) + char ~ a + b + d + e
+  f_named <- named_lst + f(d, e) ~ a + b + d + e
+  all_types <- named_lst + char + f(g, h) ~ a + b + d + e + g + h
+
+  expect_identical(as_function(char_named)(a = 1, b = 3, d = 0, e = 1), 5)
+  expect_identical(as_function(char_f)(a = 1, b = 3, d = 0, e = 1), 5)
+  expect_identical(as_function(f_named)(a = 1, b = 3, d = 0, e = 1), 5)
+  expect_identical(as_function(all_types)(a = 1, b = 3, d = 0,
+                                          e = 1, g = 0, h = 0), 5)
+})
+
+test_that("to_missing_arg_list produces correct output", {
+  expect_identical(
+    rlang:::to_missing_arg_list(c("a", "b", "c")),
+                        alist(a=, b=, c=))
+})
+
+test_that("lambda_args_verify works for character vectors",{
+  expect_equal(rlang:::lambda_args_verify(LETTERS[1:4]),
+               LETTERS[1:4])
+})
+
+test_that("lambda_args_verify works for named lists",{
+  in_list = list(A = 1, B = 2, C=3, D=4:10)
+  expect_equal(rlang:::lambda_args_verify(in_list),
+               LETTERS[1:4])
+})
+
+test_that("lambda_args_verify fails with other input",{
+  expect_error(rlang:::lambda_args_verify(1:3),
+               "Invalid arguments for lambda")
+})
+
+test_that("lambda_args_f works",{
+  expect_equal(rlang:::lambda_args_f(a, b, c = 1, d = 3),
+               letters[1:4])
+})
+test_that("lambda_args_plus works",{
+  expect_equal(
+    rlang:::lambda_args_plus(c("a", "b"), list(c = 2, d = 4)),
+    letters[1:4])
+})
+
+test_that("lambda_args_eval works", {
+  expect_equal(
+    rlang:::lambda_args_eval(expr(f(a, b) + c("d") + list(e = 1, g = 2))),
+    alist(a=, b=, d=, e=, g=))
+  expect_equal(
+    rlang:::lambda_args_eval(expr(list(a=1, b="2"))),
+    alist(a=, b=))
 })
 
 test_that("as_function() handles strings", {
