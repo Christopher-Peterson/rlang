@@ -17,12 +17,11 @@ as_closure(x, env = caller_env())
 
 If a \strong{function}, it is used as is.
 
-If a \strong{formula}, e.g. \code{~ .x + 2}, it is converted to a function
-with up to two arguments: \code{.x} (single argument) or \code{.x} and \code{.y}
-(two arguments). The \code{.} placeholder can be used instead of \code{.x}.
-This allows you to create very compact anonymous functions (lambdas) with up
-to two inputs. Functions created from formulas have a special
-class. Use \code{is_lambda()} to test for it.
+If a \strong{formula}, e.g. \code{~ .x + 2} or \code{f(a, b) ~ a + b}, it is converted
+to a function. This allows you to create very compact anonymous
+functions (lambdas). See Lambda Specification section for details.
+Functions created from formulas have a special class.
+Use \code{is_lambda()} to test for it.
 
 Lambdas currently do not support \link{nse-force},
 due to the way the arguments are handled internally.}
@@ -42,6 +41,35 @@ special control flow primitives like \code{if}, \code{for}, or \code{break}
 can't be coerced to a closure.
 }
 }
+\section{Lambda Specification}{
+
+
+The right-hand side of a lambda formula is converted into the function body.
+
+A one-sided formula (e.g., \code{~ .x + 2}), becomes a function with up to
+two arguments: \code{.x} (single argument) or \code{.x} and \code{.y}
+(two arguments). The \code{.} placeholder can be used instead of \code{.x}.
+If additional arguments are needed, they can be referred to by
+position (e.g., \code{..1}, \code{..2}, etc.).
+
+A two-sided formula can be used to manually specify arguments in three ways:
+\enumerate{
+\item A character vector, e.g., \code{c("a", "b") ~ a + b}.
+\item A named list, e.g., \code{list(a = 1,b = "two") ~ a + b}.
+\item The \code{f()} helper function, e.g., \code{f(a, b) ~ a + b}.
+Note that default values are always set to be \code{missing_arg()},
+even if they are specified in the function; e.g., \code{f(a = 1) ~ a + 1} and
+\code{f(a) ~ a + 1} both create the exact same function.
+Argument specifications of different types can be combined with the \code{+}
+operator.  For example, \code{f(a) + c("b") + list(d = 1) ~ a + b + d} is
+equivalent to \code{function(a, b, d) a + b + d}.
+}
+
+Dots (\code{...}) are automatically added after all named arguments, unless
+they are manually included at an earlier position.  Note that f(...) is
+invalid; manual dots need to be passed as a character vector or named list.
+}
+
 \examples{
 f <- as_function(~ .x + 1)
 f(10)
@@ -51,6 +79,25 @@ g(4)
 
 h <- as_function(~ .x - .y)
 h(6, 3)
+
+# Lambda arguments:
+
+i <- as_function(f(a, b) ~ a + b)
+i(a = 1, b = 2)
+
+j_names <- c("d", "e")
+j <- as_function(j_names ~ d + e)
+j(d = 2, e = 5)
+
+k_data = data.frame(pos = 1:26, upper = LETTERS)
+k <- as_function(k_data ~ paste0("Letter ", pos, ": ", upper))
+k(1:26, LETTERS)
+
+# Combine different lambda arguments with `+`;
+
+k2 <- as_function(k_data + f(suffix) ~
+                  paste0("Letter ", pos, ": ", upper, suffix))
+k2(1:26, LETTERS, suffix = "!")
 
 # Functions created from a formula have a special class:
 is_lambda(f)

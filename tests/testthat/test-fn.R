@@ -195,10 +195,10 @@ test_that("lambda_args_plus works",{
 test_that("lambda_args_eval works", {
   expect_equal(
     rlang:::lambda_args_eval(expr(f(a, b) + c("d") + list(e = 1, g = 2))),
-    alist(a=, b=, d=, e=, g=))
+    alist(a=, b=, d=, e=, g=, ...=))
   expect_equal(
     rlang:::lambda_args_eval(expr(list(a=1, b="2"))),
-    alist(a=, b=))
+    alist(a=, b=, ...=))
 })
 
 test_that("as_function() handles strings", {
